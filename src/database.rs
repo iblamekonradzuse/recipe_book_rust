@@ -1,5 +1,4 @@
 use rusqlite::{Connection, Result, params};
-use anyhow::Context;
 
 #[derive(Debug)]
 pub struct Recipe {
@@ -7,6 +6,7 @@ pub struct Recipe {
     pub title: String,
     pub link: String,
     pub category: Option<String>,
+    pub steps: Option<String>,
 }
 
 #[derive(Debug)]
@@ -25,14 +25,17 @@ impl RecipeDatabase {
     pub fn new() -> Result<Self> {
         let conn = Connection::open("recipes.db")?;
         
+        // Create recipes table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS recipes (
                 id INTEGER PRIMARY KEY,
                 title TEXT NOT NULL,
                 link TEXT NOT NULL,
-                category TEXT
+                category TEXT,
+                steps TEXT
             )", [])?;
         
+        // Create ingredients table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS ingredients (
                 id INTEGER PRIMARY KEY,
@@ -47,11 +50,67 @@ impl RecipeDatabase {
     
     pub fn add_recipe(&self, recipe: &Recipe) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO recipes (title, link, category) VALUES (?1, ?2, ?3)",
-            params![recipe.title, recipe.link, recipe.category]
+            "INSERT INTO recipes (title, link, category, steps) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                recipe.title, 
+                recipe.link, 
+                recipe.category, 
+                recipe.steps
+            ]
         )?;
         
         Ok(self.conn.last_insert_rowid())
+    }
+
+
+
+    pub fn get_recipes(&self, category: Option<&str>) -> Result<Vec<Recipe>> {
+    let query = match category {
+        Some(_) => "SELECT id, title, link, category, steps FROM recipes WHERE category = ?1",
+        None => "SELECT id, title, link, category, steps FROM recipes"
+    };
+
+    let mut stmt = self.conn.prepare(query)?;
+
+    let recipe_mapper = |row: &rusqlite::Row| {
+        Ok(Recipe {
+            id: Some(row.get(0)?),
+            title: row.get(1)?,
+            link: row.get(2)?,
+            category: row.get(3)?,
+            steps: row.get(4)?,
+        })
+    };
+
+    let recipe_iter = match category {
+        Some(cat) => stmt.query_map(rusqlite::params![cat], recipe_mapper)?,
+        None => stmt.query_map(rusqlite::params![], recipe_mapper)?
+    };
+
+    let mut recipes = Vec::new();
+    for recipe in recipe_iter {
+        recipes.push(recipe?);
+    }
+
+    Ok(recipes)
+}
+    // Method to get ingredients for a specific recipe
+
+     pub fn get_recipe_ingredients(&self, recipe_id: i64) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name FROM ingredients WHERE recipe_id = ?1"
+        )?;
+        
+        let ingredient_iter = stmt.query_map([recipe_id], |row| {
+            row.get(0)
+        })?;
+        
+        let mut ingredients = Vec::new();
+        for ingredient in ingredient_iter {
+            ingredients.push(ingredient?);
+        }
+        
+        Ok(ingredients)
     }
     
     pub fn add_ingredients(&self, recipe_id: i64, ingredients: &[String]) -> Result<()> {

@@ -14,7 +14,7 @@ pub struct SearchResult {
 #[derive(Debug, Clone)]
 pub struct RecipeDetails {
     pub materials: Vec<String>,
-    pub instructions: Vec<String>,
+    pub steps: Vec<String>, // Changed from 'instructions' to 'steps' to match cli.rs
 }
 
 fn create_client() -> Result<reqwest::blocking::Client> {
@@ -65,12 +65,12 @@ pub fn fetch_recipe_details(url: &str) -> Result<RecipeDetails> {
         .map(|element| element.text().collect::<String>())
         .collect();
     
-    let instructions: Vec<String> = document.select(&instructions_selector)
+    let steps: Vec<String> = document.select(&instructions_selector)
         .map(|element| element.text().collect::<String>())
         .collect();
     
     Ok(RecipeDetails { 
         materials, 
-        instructions 
+        steps // Changed to 'steps' to match cli.rs
     })
 }
