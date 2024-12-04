@@ -10,12 +10,6 @@ pub struct Recipe {
 }
 
 #[derive(Debug)]
-pub struct Ingredient {
-    pub id: Option<i64>,
-    pub name: String,
-    pub recipe_id: i64,
-    pub have: bool,
-}
 
 pub struct RecipeDatabase {
     conn: Connection,
@@ -62,17 +56,19 @@ impl RecipeDatabase {
         Ok(self.conn.last_insert_rowid())
     }
 
-    // New method to delete a recipe
-    pub fn delete_recipe(&self, recipe_id: i64) -> Result<()> {
-        // This will automatically delete associated ingredients due to ON DELETE CASCADE
-        self.conn.execute(
-            "DELETE FROM recipes WHERE id = ?1",
-            params![recipe_id]
-        )?;
-        
-        Ok(())
-    }
 
+    pub fn delete_recipe(&self, recipe_id: i64) -> Result<()> {
+    let deleted_count = self.conn.execute(
+        "DELETE FROM recipes WHERE id = ?1",
+        params![recipe_id]
+    )?;
+
+    if deleted_count == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows.into());
+    }
+    
+    Ok(())
+}
     pub fn get_recipes(&self, category: Option<&str>) -> Result<Vec<Recipe>> {
         let query = match category {
             Some(_) => "SELECT id, title, link, category, steps FROM recipes WHERE category = ?1",
@@ -121,12 +117,22 @@ impl RecipeDatabase {
         Ok(ingredients)
     }
     
-    pub fn add_ingredients(&self, recipe_id: i64, ingredients: &[String]) -> Result<()> {
+       pub fn add_ingredients(&self, recipe_id: i64, ingredients: &[String]) -> Result<()> {
         for ingredient in ingredients {
-            self.conn.execute(
-                "INSERT INTO ingredients (name, recipe_id) VALUES (?1, ?2)",
+            // If recipe_id is 0, it means a manual entry
+            let query = if recipe_id == 0 {
+                "INSERT INTO ingredients (name, recipe_id) VALUES (?1, NULL)"
+            } else {
+                "INSERT INTO ingredients (name, recipe_id) VALUES (?1, ?2)"
+            };
+
+            let params = if recipe_id == 0 {
+                params![ingredient]
+            } else {
                 params![ingredient, recipe_id]
-            )?;
+            };
+
+            self.conn.execute(query, params)?;
         }
         Ok(())
     }
@@ -148,27 +154,7 @@ impl RecipeDatabase {
         Ok(shopping_list)
     }
     
-    pub fn mark_ingredient(&self, ingredient_name: &str, have: bool) -> Result<()> {
-        self.conn.execute(
-            "UPDATE ingredients SET have = ?1 WHERE name = ?2",
-            params![have as i32, ingredient_name]
-        )?;
-        Ok(())
-    }
 
-    pub fn mark_multiple_ingredients(&self, ingredient_names: &[String], have: bool) -> Result<()> {
-        // Prepare a parameterized query to mark multiple ingredients
-        let placeholders: Vec<String> = ingredient_names.iter().map(|_| "?".to_string()).collect();
-        let query = format!(
-            "UPDATE ingredients SET have = {} WHERE name IN ({})",
-            have as i32, 
-            placeholders.join(", ")
-        );
-
-        // Execute the query with all ingredient names
-        self.conn.execute(&query, rusqlite::params_from_iter(ingredient_names))?;
-        Ok(())
-    }
 
         pub fn mark_and_remove_ingredients(&mut self, ingredient_names: &[String]) -> Result<()> {
         // Start a transaction to ensure atomic operation

@@ -2,7 +2,6 @@ use dialoguer::{Input, Select, Confirm, MultiSelect};
 use colored::*;
 use anyhow::Result;
 
-
 use crate::htmlscraper::{search_recipes, fetch_recipe_details};
 use crate::database::{RecipeDatabase, Recipe};
 
@@ -16,6 +15,7 @@ pub fn run_cli() -> Result<()> {
             "View Saved Recipes",
             "Delete Saved Recipes",
             "View Shopping List", 
+            "Add to Shopping List",
             "Mark Ingredients", 
             "Exit"
         ];
@@ -26,14 +26,131 @@ pub fn run_cli() -> Result<()> {
             .interact()?;
 
         match selection {
-    0 => search_and_save_recipe(&db)?,
-    1 => view_saved_recipes(&db)?,
-    2 => delete_saved_recipes(&db)?,
-    3 => view_shopping_list(&db)?,
-    4 => mark_ingredients(&mut db)?, // Add &mut here
-    5 => break,
-    _ => unreachable!(),
+            0 => search_and_save_recipe(&db)?,
+            1 => view_saved_recipes(&db)?,
+            2 => delete_saved_recipes(&db)?,
+            3 => view_shopping_list(&db)?,
+            4 => add_to_shopping_list(&db)?,
+            5 => mark_ingredients(&mut db)?,
+            6 => break,
+            _ => unreachable!(),
+        }
+    }
+
+    Ok(())
 }
+
+fn add_to_shopping_list(db: &RecipeDatabase) -> Result<()> {
+    let add_options = vec![
+        "Add from Saved Recipes",
+        "Add Manually",
+        "Cancel"
+    ];
+
+    let selection = Select::new()
+        .with_prompt("How would you like to add items?")
+        .items(&add_options)
+        .interact()?;
+
+    match selection {
+        0 => add_ingredients_from_recipes(db)?,
+        1 => add_manual_ingredients(db)?,
+        2 => return Ok(()), // Cancel
+        _ => unreachable!(),
+    }
+
+    Ok(())
+}
+
+fn add_ingredients_from_recipes(db: &RecipeDatabase) -> Result<()> {
+    // Fetch saved recipes
+    let recipes = db.get_recipes(None)?;
+
+    if recipes.is_empty() {
+        println!("\n{}", "No saved recipes found!".green());
+        return Ok(());
+    }
+
+    // Let user select a recipe
+    let recipe_titles: Vec<String> = recipes.iter().map(|r| r.title.clone()).collect();
+    
+    let recipe_selection = Select::new()
+        .with_prompt("Select a recipe to view ingredients")
+        .items(&recipe_titles)
+        .interact()?;
+
+    let selected_recipe = &recipes[recipe_selection];
+
+    // Fetch ingredients for the selected recipe
+    let ingredients = db.get_recipe_ingredients(selected_recipe.id.unwrap())?;
+
+    if ingredients.is_empty() {
+        println!("\n{}", "No ingredients found for this recipe!".green());
+        return Ok(());
+    }
+
+    // Let user select ingredients to add to shopping list
+    let selected_ingredient_indices = MultiSelect::new()
+        .with_prompt("Select ingredients to add to shopping list")
+        .items(&ingredients)
+        .interact()?;
+
+    if selected_ingredient_indices.is_empty() {
+        println!("\n{}", "No ingredients selected.".green());
+        return Ok(());
+    }
+
+    // Collect selected ingredients
+    let selected_ingredients: Vec<String> = selected_ingredient_indices
+        .iter()
+        .map(|&idx| ingredients[idx].clone())
+        .collect();
+
+    // Confirm adding ingredients
+    if Confirm::new()
+        .with_prompt(format!("Add {} ingredient(s) to shopping list?", selected_ingredients.len()))
+        .interact()?
+    {
+        // Add ingredients to database
+        for ingredient in &selected_ingredients {
+            db.add_ingredients(selected_recipe.id.unwrap(), &[ingredient.clone()])?;
+        }
+
+        println!("{} ingredient(s) added to shopping list!", selected_ingredients.len());
+    }
+
+    Ok(())
+}
+
+fn add_manual_ingredients(db: &RecipeDatabase) -> Result<()> {
+    // Prompt for multiple ingredients (comma-separated)
+    let ingredients_input = Input::<String>::new()
+        .with_prompt("Enter ingredients to add (comma-separated)")
+        .interact_text()?;
+
+    // Split and trim ingredients
+    let ingredients: Vec<String> = ingredients_input
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if ingredients.is_empty() {
+        println!("\n{}", "No ingredients entered.".green());
+        return Ok(());
+    }
+
+    // Confirm adding ingredients
+    if Confirm::new()
+        .with_prompt(format!("Add {} ingredient(s) to shopping list?", ingredients.len()))
+        .interact()?
+    {
+        // Add ingredients to database (with a dummy recipe_id of 0 for manual entries)
+        for ingredient in &ingredients {
+            db.add_ingredients(0, &[ingredient.clone()])?;
+        }
+
+        println!("{} ingredient(s) added to shopping list!", ingredients.len());
     }
 
     Ok(())
@@ -169,7 +286,6 @@ fn view_shopping_list(db: &RecipeDatabase) -> Result<()> {
     Ok(())
 }
 
-
 fn delete_saved_recipes(db: &RecipeDatabase) -> Result<()> {
     // Allow filtering by category
     let filter_category = Confirm::new()
@@ -187,7 +303,8 @@ fn delete_saved_recipes(db: &RecipeDatabase) -> Result<()> {
         None
     };
 
-    let recipes = db.get_recipes(category.as_ref().map(String::as_str))?;
+    // Reload recipes after deletion to ensure the latest list
+    let mut recipes = db.get_recipes(category.as_ref().map(String::as_str))?;
 
     if recipes.is_empty() {
         println!("\n{}", "No saved recipes found!".green());
@@ -214,7 +331,17 @@ fn delete_saved_recipes(db: &RecipeDatabase) -> Result<()> {
                 db.delete_recipe(recipe_id)?;
                 println!("Deleted recipe: {}", recipe.title);
             }
+            
+            // Reload recipes to reflect deletions
+            recipes = db.get_recipes(category.as_ref().map(String::as_str))?;
+            
             println!("Selected recipes deleted successfully!");
+            
+            // If no recipes remain, return
+            if recipes.is_empty() {
+                println!("\n{}", "No saved recipes remaining!".green());
+                return Ok(());
+            }
         }
     }
 
